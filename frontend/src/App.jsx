@@ -295,10 +295,22 @@ function InvoiceProcessPage() {
       const response = await invoiceAPI.getOne(id)
       const data = response.data
       setInvoice(data)
+      
+      // 如果附件字段为空，自动填写为文件名
+      let attachmentsValue = ''
+      if (data.attachments) {
+        attachmentsValue = typeof data.attachments === 'string' 
+          ? JSON.parse(data.attachments).join(', ') 
+          : data.attachments.join(', ')
+      } else {
+        // 附件为空时，自动填写为文件名
+        attachmentsValue = data.original_filename || ''
+      }
+      
       setFormData({
         category: data.category || '',
         amount: data.amount || '',
-        attachments: data.attachments ? (typeof data.attachments === 'string' ? JSON.parse(data.attachments).join(', ') : data.attachments.join(', ')) : '',
+        attachments: attachmentsValue,
         notes: data.notes || '',
       })
     } catch (error) {
@@ -490,10 +502,10 @@ function InvoiceProcessPage() {
                   value={formData.attachments}
                   onChange={(e) => setFormData({ ...formData, attachments: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="请输入附件名称，多个用逗号分隔（如：行程单,详情）"
+                  placeholder="附件名称（已自动填写为文件名，可修改）"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  多个附件请用逗号分隔
+                  已自动填写为文件名，可修改。多个附件请用逗号分隔
                 </p>
               </div>
 
