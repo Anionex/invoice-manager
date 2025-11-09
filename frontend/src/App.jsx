@@ -52,12 +52,78 @@ function HomePage() {
 
     try {
       setUploading(true)
+      
+      // 获取已有的发票文件名列表（用于检查重名）
+      const existingFilenames = new Set(invoices.map(inv => inv.original_filename))
+      
+      // 检查当前批次中的重复文件名
+      const currentBatchFilenames = new Set()
+      const duplicateInBatch = []
+      
+      // 检查与已有文件的重名和当前批次内的重名
+      const duplicateFiles = []
+      const validFiles = []
+      
+      for (const file of files) {
+        const filename = file.name
+        
+        // 检查是否在当前批次中重复
+        if (currentBatchFilenames.has(filename)) {
+          duplicateInBatch.push(filename)
+          continue
+        }
+        
+        // 检查是否与已有文件重名
+        if (existingFilenames.has(filename)) {
+          duplicateFiles.push(filename)
+          continue
+        }
+        
+        // 文件名不重复，可以上传
+        currentBatchFilenames.add(filename)
+        validFiles.push(file)
+      }
+      
+      // 如果有重名文件，显示提示
+      const totalDuplicates = duplicateFiles.length + duplicateInBatch.length
+      if (totalDuplicates > 0) {
+        // 显示重名文件提示
+        if (duplicateFiles.length > 0) {
+          const duplicateNames = duplicateFiles.length <= 5 
+            ? duplicateFiles.join(', ') 
+            : duplicateFiles.slice(0, 5).join(', ') + ' 等'
+          toast.error(
+            `有 ${duplicateFiles.length} 个文件与已有文件重名，已跳过：${duplicateNames}`,
+            { duration: 6000 }
+          )
+        }
+        if (duplicateInBatch.length > 0) {
+          const duplicateNames = duplicateInBatch.length <= 5 
+            ? duplicateInBatch.join(', ') 
+            : duplicateInBatch.slice(0, 5).join(', ') + ' 等'
+          toast.error(
+            `有 ${duplicateInBatch.length} 个文件在当前批次中重复，已跳过：${duplicateNames}`,
+            { duration: 6000 }
+          )
+        }
+      }
+      
+      // 如果没有可上传的文件，直接返回
+      if (validFiles.length === 0) {
+        e.target.value = ''
+        setUploading(false)
+        if (totalDuplicates > 0) {
+          toast.error(`所有文件都因重名被跳过，没有文件上传`, { duration: 5000 })
+        }
+        return
+      }
+      
+      // 批量上传有效文件
       let successCount = 0
       let failCount = 0
       const errors = []
 
-      // 批量上传文件
-      for (const file of files) {
+      for (const file of validFiles) {
         try {
           await invoiceAPI.upload(file)
           successCount++
@@ -73,9 +139,13 @@ function HomePage() {
 
       // 显示上传结果
       if (successCount > 0 && failCount === 0) {
-        toast.success(`成功上传 ${successCount} 个文件`)
+        if (totalDuplicates > 0) {
+          toast.success(`成功上传 ${successCount} 个文件（${totalDuplicates} 个因重名跳过）`, { duration: 5000 })
+        } else {
+          toast.success(`成功上传 ${successCount} 个文件`)
+        }
       } else if (successCount > 0 && failCount > 0) {
-        toast.success(`成功上传 ${successCount} 个文件，失败 ${failCount} 个`, { duration: 5000 })
+        toast.success(`成功上传 ${successCount} 个文件，失败 ${failCount} 个${totalDuplicates > 0 ? `，${totalDuplicates} 个因重名跳过` : ''}`, { duration: 5000 })
         errors.forEach(error => {
           toast.error(error, { duration: 4000 })
         })
