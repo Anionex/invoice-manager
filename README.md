@@ -18,6 +18,7 @@
 - **后端**：Python + Flask + SQLite
 - **前端**：React + Vite + Tailwind CSS
 - **路由**：React Router
+- **通知组件**：react-hot-toast（用于消息提示）
 
 ## 项目结构
 

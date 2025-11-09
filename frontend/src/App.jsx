@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useParams } from 'react-router-dom'
+import { Toaster, toast } from 'react-hot-toast'
 import { invoiceAPI } from './api'
+import ConfirmDialog from './components/ConfirmDialog'
 
 // 主页面组件
 function HomePage() {
@@ -9,6 +11,7 @@ function HomePage() {
   const [completedInvoices, setCompletedInvoices] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, id: null })
 
   useEffect(() => {
     loadInvoices()
@@ -24,7 +27,7 @@ function HomePage() {
       setCompletedInvoices(allInvoices.filter(inv => inv.status === 'completed'))
     } catch (error) {
       console.error('加载发票列表失败:', error)
-      alert('加载发票列表失败')
+      toast.error('加载发票列表失败')
     } finally {
       setLoading(false)
     }
@@ -35,7 +38,7 @@ function HomePage() {
     if (!file) return
 
     if (!['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(file.name.split('.').pop().toLowerCase())) {
-      alert('不支持的文件类型，请上传PDF或图片文件')
+      toast.error('不支持的文件类型，请上传PDF或图片文件')
       return
     }
 
@@ -43,26 +46,32 @@ function HomePage() {
       setUploading(true)
       await invoiceAPI.upload(file)
       await loadInvoices()
-      alert('上传成功')
+      toast.success('上传成功')
       e.target.value = '' // 重置文件输入
     } catch (error) {
       console.error('上传失败:', error)
-      alert('上传失败: ' + (error.response?.data?.error || error.message))
+      toast.error('上传失败: ' + (error.response?.data?.error || error.message))
     } finally {
       setUploading(false)
     }
   }
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('确定要删除这张发票吗？')) return
+  const handleDelete = (id) => {
+    setDeleteConfirm({ isOpen: true, id })
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm.id) return
 
     try {
-      await invoiceAPI.delete(id)
+      await invoiceAPI.delete(deleteConfirm.id)
       await loadInvoices()
-      alert('删除成功')
+      toast.success('删除成功')
+      setDeleteConfirm({ isOpen: false, id: null })
     } catch (error) {
       console.error('删除失败:', error)
-      alert('删除失败')
+      toast.error('删除失败')
+      setDeleteConfirm({ isOpen: false, id: null })
     }
   }
 
@@ -78,10 +87,10 @@ function HomePage() {
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      alert('导出成功')
+      toast.success('导出成功')
     } catch (error) {
       console.error('导出失败:', error)
-      alert('导出失败: ' + (error.response?.data?.error || error.message))
+      toast.error('导出失败: ' + (error.response?.data?.error || error.message))
     }
   }
 
@@ -95,6 +104,13 @@ function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <ConfirmDialog
+        isOpen={deleteConfirm.isOpen}
+        title="确认删除"
+        message="确定要删除这张发票吗？删除后无法恢复。"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteConfirm({ isOpen: false, id: null })}
+      />
       <div className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
@@ -227,6 +243,7 @@ function InvoiceProcessPage() {
     notes: '',
   })
   const [zoom, setZoom] = useState(1)
+  const [resetConfirm, setResetConfirm] = useState(false)
 
   useEffect(() => {
     loadInvoice()
@@ -246,7 +263,7 @@ function InvoiceProcessPage() {
       })
     } catch (error) {
       console.error('加载发票失败:', error)
-      alert('加载发票失败')
+      toast.error('加载发票失败')
       navigate('/')
     } finally {
       setLoading(false)
@@ -267,19 +284,21 @@ function InvoiceProcessPage() {
         attachments: attachments.length > 0 ? attachments : null,
         status: 'completed',
       })
-      alert('保存成功')
+      toast.success('保存成功')
       navigate('/')
     } catch (error) {
       console.error('保存失败:', error)
-      alert('保存失败: ' + (error.response?.data?.error || error.message))
+      toast.error('保存失败: ' + (error.response?.data?.error || error.message))
     } finally {
       setSaving(false)
     }
   }
 
-  const handleReset = async () => {
-    if (!window.confirm('确定要清空内容并还原为未处理状态吗？')) return
+  const handleReset = () => {
+    setResetConfirm(true)
+  }
 
+  const confirmReset = async () => {
     try {
       setSaving(true)
       await invoiceAPI.update(id, {
@@ -289,13 +308,14 @@ function InvoiceProcessPage() {
         notes: null,
         status: 'pending',
       })
-      alert('已还原为未处理状态')
+      toast.success('已还原为未处理状态')
       navigate('/')
     } catch (error) {
       console.error('还原失败:', error)
-      alert('还原失败')
+      toast.error('还原失败')
     } finally {
       setSaving(false)
+      setResetConfirm(false)
     }
   }
 
@@ -320,6 +340,13 @@ function InvoiceProcessPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <ConfirmDialog
+        isOpen={resetConfirm}
+        title="确认还原"
+        message="确定要清空内容并还原为未处理状态吗？"
+        onConfirm={confirmReset}
+        onCancel={() => setResetConfirm(false)}
+      />
       <div className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center gap-4">
@@ -474,6 +501,30 @@ function InvoiceProcessPage() {
 function App() {
   return (
     <Router>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+          success: {
+            duration: 3000,
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            duration: 4000,
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/invoice/:id" element={<InvoiceProcessPage />} />
