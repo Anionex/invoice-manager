@@ -6,7 +6,6 @@ import json
 import csv
 import io
 from datetime import datetime
-from werkzeug.utils import secure_filename
 import uuid
 
 app = Flask(__name__)
@@ -101,7 +100,7 @@ def upload_invoice():
     # 生成唯一ID和文件名
     invoice_id = str(uuid.uuid4())
     file_ext = file.filename.rsplit('.', 1)[1].lower()
-    safe_filename = secure_filename(file.filename)
+    original_filename = file.filename  # 保留原始文件名，不进行 secure_filename 处理
     stored_filename = f"{invoice_id}.{file_ext}"
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
     
@@ -114,13 +113,13 @@ def upload_invoice():
     c.execute('''
         INSERT INTO invoices (id, filename, original_filename, file_path, file_type, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (invoice_id, stored_filename, safe_filename, file_path, file_ext, 'pending', now, now))
+    ''', (invoice_id, stored_filename, original_filename, file_path, file_ext, 'pending', now, now))
     conn.commit()
     conn.close()
     
     return jsonify({
         'id': invoice_id,
-        'filename': safe_filename,
+        'filename': original_filename,
         'status': 'pending'
     }), 201
 
