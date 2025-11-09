@@ -43,6 +43,18 @@ def init_db():
             updated_at TEXT NOT NULL
         )
     ''')
+    # 附件关系表：存储文件之间的附件关系
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS invoice_attachments (
+            id TEXT PRIMARY KEY,
+            invoice_id TEXT NOT NULL,
+            attachment_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+            FOREIGN KEY (attachment_id) REFERENCES invoices(id) ON DELETE CASCADE,
+            UNIQUE(invoice_id, attachment_id)
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -212,7 +224,7 @@ def get_invoice_file(invoice_id):
     
     return send_file(result[0], as_attachment=False, download_name=result[1])
 
-def generate_csv_content(categories):
+def generate_csv_content(categories, attachment_map):
     """生成CSV内容"""
     output = io.StringIO()
     writer = csv.writer(output)
@@ -230,15 +242,29 @@ def generate_csv_content(categories):
             category_total += amount
             total_amount += amount
             
+            invoice_id = invoice.get('id')
+            
+            # 获取手动填写的附件名称
+            attachment_names = []
             attachments = invoice.get('attachments')
             if attachments:
                 try:
                     attachments = json.loads(attachments)
-                    attachments_str = ', '.join(attachments) if isinstance(attachments, list) else str(attachments)
+                    if isinstance(attachments, list):
+                        attachment_names.extend(attachments)
+                    else:
+                        attachment_names.append(str(attachments))
                 except:
-                    attachments_str = str(attachments)
-            else:
-                attachments_str = ''
+                    attachment_names.append(str(attachments))
+            
+            # 获取通过"作为附件"功能关联的实际附件文件
+            if invoice_id in attachment_map:
+                attachment_files = attachment_map[invoice_id]
+                # 将附件文件名添加到列表中
+                attachment_names.extend(attachment_files)
+            
+            # 合并所有附件信息
+            attachments_str = ', '.join(attachment_names) if attachment_names else ''
             
             writer.writerow([
                 category,
@@ -269,6 +295,28 @@ def export_invoices():
     c = conn.cursor()
     c.execute("SELECT * FROM invoices WHERE status = 'completed' ORDER BY category, created_at")
     invoices = [dict(row) for row in c.fetchall()]
+    
+    # 获取所有发票的附件关系映射（invoice_id -> [attachment_filenames]）
+    attachment_map = {}
+    invoice_ids = [inv['id'] for inv in invoices]
+    if invoice_ids:
+        # 使用参数化查询，避免SQL注入
+        placeholders = ','.join(['?'] * len(invoice_ids))
+        c.execute(f'''
+            SELECT ia.invoice_id, i.original_filename
+            FROM invoice_attachments ia
+            INNER JOIN invoices i ON ia.attachment_id = i.id
+            WHERE ia.invoice_id IN ({placeholders})
+            ORDER BY ia.created_at
+        ''', invoice_ids)
+        
+        for row in c.fetchall():
+            invoice_id = row[0]
+            attachment_filename = row[1]
+            if invoice_id not in attachment_map:
+                attachment_map[invoice_id] = []
+            attachment_map[invoice_id].append(attachment_filename)
+    
     conn.close()
     
     if not invoices:
@@ -283,7 +331,7 @@ def export_invoices():
         categories[category].append(invoice)
     
     # 生成CSV内容（目前excel格式也返回CSV，可以后续扩展为真正的Excel）
-    csv_content = generate_csv_content(categories)
+    csv_content = generate_csv_content(categories, attachment_map)
     
     return send_file(
         io.BytesIO(csv_content.encode('utf-8-sig')),
@@ -291,6 +339,119 @@ def export_invoices():
         as_attachment=True,
         download_name=f'invoices_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
     )
+
+# 附件关系相关API
+@app.route('/api/invoices/attachments/all', methods=['GET'])
+def get_all_attachment_ids():
+    """获取所有被指定为附件的发票ID列表"""
+    conn = sqlite3.connect('database/invoices.db')
+    c = conn.cursor()
+    
+    # 获取所有被指定为附件的发票ID
+    c.execute('SELECT DISTINCT attachment_id FROM invoice_attachments')
+    attachment_ids = [row[0] for row in c.fetchall()]
+    
+    conn.close()
+    
+    return jsonify({'attachment_ids': attachment_ids})
+
+@app.route('/api/invoices/<invoice_id>/attachments', methods=['GET'])
+def get_invoice_attachments(invoice_id):
+    """获取发票的附件列表"""
+    conn = sqlite3.connect('database/invoices.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    # 获取作为附件的文件列表
+    c.execute('''
+        SELECT i.*, ia.created_at as attached_at
+        FROM invoices i
+        INNER JOIN invoice_attachments ia ON i.id = ia.attachment_id
+        WHERE ia.invoice_id = ?
+        ORDER BY ia.created_at DESC
+    ''', (invoice_id,))
+    attachments = [dict(row) for row in c.fetchall()]
+    
+    # 获取当前文件作为附件被哪些文件引用
+    c.execute('''
+        SELECT i.*, ia.created_at as attached_at
+        FROM invoices i
+        INNER JOIN invoice_attachments ia ON i.id = ia.invoice_id
+        WHERE ia.attachment_id = ?
+        ORDER BY ia.created_at DESC
+    ''', (invoice_id,))
+    attached_to = [dict(row) for row in c.fetchall()]
+    
+    conn.close()
+    
+    return jsonify({
+        'attachments': attachments,  # 当前文件的附件列表
+        'attached_to': attached_to   # 当前文件作为附件被哪些文件引用
+    })
+
+@app.route('/api/invoices/<invoice_id>/attachments', methods=['POST'])
+def add_invoice_attachment(invoice_id):
+    """将文件添加为发票的附件"""
+    data = request.json
+    attachment_id = data.get('attachment_id')
+    
+    if not attachment_id:
+        return jsonify({'error': 'attachment_id is required'}), 400
+    
+    if invoice_id == attachment_id:
+        return jsonify({'error': 'Cannot attach file to itself'}), 400
+    
+    conn = sqlite3.connect('database/invoices.db')
+    c = conn.cursor()
+    
+    # 检查两个文件是否存在
+    c.execute('SELECT id FROM invoices WHERE id = ?', (invoice_id,))
+    if not c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Invoice not found'}), 404
+    
+    c.execute('SELECT id FROM invoices WHERE id = ?', (attachment_id,))
+    if not c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Attachment file not found'}), 404
+    
+    # 检查是否已经存在
+    c.execute('SELECT id FROM invoice_attachments WHERE invoice_id = ? AND attachment_id = ?', 
+              (invoice_id, attachment_id))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Attachment already exists'}), 400
+    
+    # 添加附件关系
+    attachment_rel_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    c.execute('''
+        INSERT INTO invoice_attachments (id, invoice_id, attachment_id, created_at)
+        VALUES (?, ?, ?, ?)
+    ''', (attachment_rel_id, invoice_id, attachment_id, now))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'message': 'Attachment added successfully'}), 201
+
+@app.route('/api/invoices/<invoice_id>/attachments/<attachment_id>', methods=['DELETE'])
+def remove_invoice_attachment(invoice_id, attachment_id):
+    """移除发票的附件"""
+    conn = sqlite3.connect('database/invoices.db')
+    c = conn.cursor()
+    
+    c.execute('DELETE FROM invoice_attachments WHERE invoice_id = ? AND attachment_id = ?',
+              (invoice_id, attachment_id))
+    
+    if c.rowcount == 0:
+        conn.close()
+        return jsonify({'error': 'Attachment not found'}), 404
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'message': 'Attachment removed successfully'})
 
 if __name__ == '__main__':
     app.run(debug=True, host='127.0.0.1', port=5000)

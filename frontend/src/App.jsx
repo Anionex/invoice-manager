@@ -9,6 +9,7 @@ function HomePage() {
   const [invoices, setInvoices] = useState([])
   const [pendingInvoices, setPendingInvoices] = useState([])
   const [completedInvoices, setCompletedInvoices] = useState([])
+  const [attachmentInvoices, setAttachmentInvoices] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, id: null })
@@ -22,11 +23,24 @@ function HomePage() {
   const loadInvoices = async () => {
     try {
       setLoading(true)
-      const response = await invoiceAPI.getAll()
-      const allInvoices = response.data
+      const [invoicesResponse, attachmentsResponse] = await Promise.all([
+        invoiceAPI.getAll(),
+        invoiceAPI.getAllAttachmentIds()
+      ])
+      
+      const allInvoices = invoicesResponse.data
+      const attachmentIds = new Set(attachmentsResponse.data.attachment_ids || [])
+      
       setInvoices(allInvoices)
-      setPendingInvoices(allInvoices.filter(inv => inv.status === 'pending'))
-      setCompletedInvoices(allInvoices.filter(inv => inv.status === 'completed'))
+      
+      // 过滤出被指定为附件的发票
+      const attachmentInvoicesList = allInvoices.filter(inv => attachmentIds.has(inv.id))
+      setAttachmentInvoices(attachmentInvoicesList)
+      
+      // 从待处理和已处理列表中排除附件发票
+      const nonAttachmentInvoices = allInvoices.filter(inv => !attachmentIds.has(inv.id))
+      setPendingInvoices(nonAttachmentInvoices.filter(inv => inv.status === 'pending'))
+      setCompletedInvoices(nonAttachmentInvoices.filter(inv => inv.status === 'completed'))
       
       // 清理已删除发票的选中状态
       const existingIds = new Set(allInvoices.map(inv => inv.id))
@@ -410,7 +424,7 @@ function HomePage() {
         </div>
 
         {/* 已处理发票 */}
-        <div>
+        <div className="mb-8">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-2xl font-semibold text-gray-800">
               已处理发票 ({completedInvoices.length})
@@ -442,15 +456,51 @@ function HomePage() {
             </div>
           )}
         </div>
+
+        {/* 附件发票 */}
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-semibold text-gray-800">
+              附件 ({attachmentInvoices.length})
+            </h2>
+            {attachmentInvoices.length > 0 && (
+              <button
+                onClick={() => handleSelectAll(attachmentInvoices)}
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                {attachmentInvoices.every(inv => selectedInvoices.has(inv.id)) ? '取消全选' : '全选'}
+              </button>
+            )}
+          </div>
+          {attachmentInvoices.length === 0 ? (
+            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+              暂无附件文件
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {attachmentInvoices.map((invoice) => (
+                <InvoiceCard
+                  key={invoice.id}
+                  invoice={invoice}
+                  onDelete={handleDelete}
+                  isSelected={selectedInvoices.has(invoice.id)}
+                  onSelect={() => handleSelectInvoice(invoice.id)}
+                  isAttachment={true}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
 // 发票卡片组件
-function InvoiceCard({ invoice, onDelete, isSelected = false, onSelect }) {
+function InvoiceCard({ invoice, onDelete, isSelected = false, onSelect, isAttachment = false }) {
   const navigate = useNavigate()
   const statusColor = invoice.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+  const attachmentColor = 'bg-purple-100 text-purple-800'
 
   return (
     <div className={`bg-white rounded-lg shadow hover:shadow-md transition p-4 ${isSelected ? 'ring-2 ring-blue-500' : ''}`}>
@@ -466,6 +516,11 @@ function InvoiceCard({ invoice, onDelete, isSelected = false, onSelect }) {
             onClick={(e) => e.stopPropagation()}
             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
           />
+          {isAttachment && (
+            <span className={`px-2 py-1 rounded text-xs font-medium ${attachmentColor}`}>
+              附件
+            </span>
+          )}
           <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
             {invoice.status === 'completed' ? '已处理' : '待处理'}
           </span>
@@ -516,9 +571,16 @@ function InvoiceProcessPage() {
   })
   const [zoom, setZoom] = useState(1)
   const [resetConfirm, setResetConfirm] = useState(false)
+  const [showAttachDialog, setShowAttachDialog] = useState(false)
+  const [allInvoices, setAllInvoices] = useState([])
+  const [selectedTargetInvoice, setSelectedTargetInvoice] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [attachedTo, setAttachedTo] = useState([])
 
   useEffect(() => {
     loadInvoice()
+    loadAttachments()
+    loadAllInvoices()
   }, [id])
 
   const loadInvoice = async () => {
@@ -551,6 +613,56 @@ function InvoiceProcessPage() {
       navigate('/')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadAllInvoices = async () => {
+    try {
+      const response = await invoiceAPI.getAll()
+      // 排除当前发票
+      const allInvoices = response.data.filter(inv => inv.id !== id)
+      setAllInvoices(allInvoices)
+    } catch (error) {
+      console.error('加载发票列表失败:', error)
+    }
+  }
+
+  const loadAttachments = async () => {
+    try {
+      const response = await invoiceAPI.getAttachments(id)
+      setAttachments(response.data.attachments || [])
+      setAttachedTo(response.data.attached_to || [])
+    } catch (error) {
+      console.error('加载附件列表失败:', error)
+    }
+  }
+
+  const handleAttachToInvoice = async () => {
+    if (!selectedTargetInvoice) {
+      toast.error('请选择目标发票')
+      return
+    }
+
+    try {
+      await invoiceAPI.addAttachment(selectedTargetInvoice, id)
+      toast.success('已添加为附件')
+      setShowAttachDialog(false)
+      setSelectedTargetInvoice('')
+      await loadAttachments()
+    } catch (error) {
+      console.error('添加附件失败:', error)
+      toast.error('添加附件失败: ' + (error.response?.data?.error || error.message))
+    }
+  }
+
+  const handleRemoveAttachment = async (attachmentId) => {
+    try {
+      await invoiceAPI.removeAttachment(id, attachmentId)
+      toast.success('已移除附件')
+      await loadAttachments()
+    } catch (error) {
+      console.error('移除附件失败:', error)
+      toast.error('移除附件失败')
     }
   }
 
@@ -641,9 +753,56 @@ function InvoiceProcessPage() {
               ← 返回
             </button>
             <h1 className="text-2xl font-bold text-gray-900">{invoice.original_filename}</h1>
+            <button
+              onClick={() => setShowAttachDialog(true)}
+              className="ml-auto px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+            >
+              作为附件
+            </button>
           </div>
         </div>
       </div>
+
+      {/* 作为附件对话框 */}
+      {showAttachDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">将文件添加为附件</h3>
+              <p className="text-gray-600 mb-4">选择要将当前文件添加为附件的目标发票：</p>
+              <select
+                value={selectedTargetInvoice}
+                onChange={(e) => setSelectedTargetInvoice(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+              >
+                <option value="">请选择目标发票</option>
+                {allInvoices.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.original_filename} {inv.status === 'completed' ? `(${inv.category || '未分类'})` : '(待处理)'}
+                  </option>
+                ))}
+              </select>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowAttachDialog(false)
+                    setSelectedTargetInvoice('')
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleAttachToInvoice}
+                  className="px-4 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition"
+                >
+                  确认
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -774,6 +933,73 @@ function InvoiceProcessPage() {
                 )}
               </div>
             </form>
+          </div>
+        </div>
+
+        {/* 附件栏目 */}
+        <div className="mt-8 bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">附件</h2>
+          
+          {/* 当前文件的附件列表 */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">附件列表 ({attachments.length})</h3>
+            {attachments.length === 0 ? (
+              <p className="text-sm text-gray-500">暂无附件</p>
+            ) : (
+              <div className="space-y-2">
+                {attachments.map((attachment) => (
+                  <div key={attachment.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-700">{attachment.original_filename}</span>
+                      <span className="text-xs text-gray-400">
+                        ({attachment.status === 'completed' ? attachment.category || '未分类' : '待处理'})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => navigate(`/invoice/${attachment.id}`)}
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        查看
+                      </button>
+                      <button
+                        onClick={() => handleRemoveAttachment(attachment.id)}
+                        className="text-xs text-red-600 hover:text-red-800"
+                      >
+                        移除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 当前文件作为附件被哪些文件引用 */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 mb-2">作为附件被引用 ({attachedTo.length})</h3>
+            {attachedTo.length === 0 ? (
+              <p className="text-sm text-gray-500">当前文件未被其他文件引用为附件</p>
+            ) : (
+              <div className="space-y-2">
+                {attachedTo.map((invoice) => (
+                  <div key={invoice.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-700">{invoice.original_filename}</span>
+                      <span className="text-xs text-gray-400">
+                        ({invoice.status === 'completed' ? invoice.category || '未分类' : '待处理'})
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => navigate(`/invoice/${invoice.id}`)}
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                    >
+                      查看
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

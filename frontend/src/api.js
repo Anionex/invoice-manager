@@ -55,6 +55,28 @@ export const invoiceAPI = {
       responseType: 'blob',
     })
   },
+
+  // 获取所有被指定为附件的发票ID列表
+  getAllAttachmentIds: () => {
+    return api.get('/invoices/attachments/all')
+  },
+
+  // 获取发票的附件列表
+  getAttachments: (id) => {
+    return api.get(`/invoices/${id}/attachments`)
+  },
+
+  // 添加附件
+  addAttachment: (invoiceId, attachmentId) => {
+    return api.post(`/invoices/${invoiceId}/attachments`, {
+      attachment_id: attachmentId,
+    })
+  },
+
+  // 移除附件
+  removeAttachment: (invoiceId, attachmentId) => {
+    return api.delete(`/invoices/${invoiceId}/attachments/${attachmentId}`)
+  },
 }
 
 export default api
