@@ -12,6 +12,8 @@ function HomePage() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, id: null })
+  const [selectedInvoices, setSelectedInvoices] = useState(new Set())
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
 
   useEffect(() => {
     loadInvoices()
@@ -25,6 +27,18 @@ function HomePage() {
       setInvoices(allInvoices)
       setPendingInvoices(allInvoices.filter(inv => inv.status === 'pending'))
       setCompletedInvoices(allInvoices.filter(inv => inv.status === 'completed'))
+      
+      // 清理已删除发票的选中状态
+      const existingIds = new Set(allInvoices.map(inv => inv.id))
+      setSelectedInvoices(prev => {
+        const newSet = new Set()
+        prev.forEach(id => {
+          if (existingIds.has(id)) {
+            newSet.add(id)
+          }
+        })
+        return newSet
+      })
     } catch (error) {
       console.error('加载发票列表失败:', error)
       toast.error('加载发票列表失败')
@@ -177,10 +191,107 @@ function HomePage() {
       await loadInvoices()
       toast.success('删除成功')
       setDeleteConfirm({ isOpen: false, id: null })
+      // 如果选中的发票被删除，从选中列表中移除
+      setSelectedInvoices(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(deleteConfirm.id)
+        return newSet
+      })
     } catch (error) {
       console.error('删除失败:', error)
       toast.error('删除失败')
       setDeleteConfirm({ isOpen: false, id: null })
+    }
+  }
+
+  // 批量删除相关函数
+  const handleSelectInvoice = (id) => {
+    setSelectedInvoices(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(id)) {
+        newSet.delete(id)
+      } else {
+        newSet.add(id)
+      }
+      return newSet
+    })
+  }
+
+  const handleSelectAll = (invoices) => {
+    const invoiceIds = new Set(invoices.map(inv => inv.id))
+    const allSelected = invoices.every(inv => selectedInvoices.has(inv.id))
+    
+    if (allSelected) {
+      // 如果全部选中，则取消全选（只取消当前列表的选中）
+      setSelectedInvoices(prev => {
+        const newSet = new Set(prev)
+        invoiceIds.forEach(id => newSet.delete(id))
+        return newSet
+      })
+    } else {
+      // 否则全选（保留其他列表的选中状态）
+      setSelectedInvoices(prev => {
+        const newSet = new Set(prev)
+        invoiceIds.forEach(id => newSet.add(id))
+        return newSet
+      })
+    }
+  }
+
+  const handleBatchDelete = () => {
+    if (selectedInvoices.size === 0) {
+      toast.error('请先选择要删除的发票')
+      return
+    }
+    setBatchDeleteConfirm(true)
+  }
+
+  const confirmBatchDelete = async () => {
+    const idsToDelete = Array.from(selectedInvoices)
+    if (idsToDelete.length === 0) return
+
+    try {
+      let successCount = 0
+      let failCount = 0
+      const errors = []
+
+      // 批量删除
+      for (const id of idsToDelete) {
+        try {
+          await invoiceAPI.delete(id)
+          successCount++
+        } catch (error) {
+          failCount++
+          const invoice = invoices.find(inv => inv.id === id)
+          errors.push(`${invoice?.original_filename || id}: ${error.response?.data?.error || error.message}`)
+          console.error(`删除发票 ${id} 失败:`, error)
+        }
+      }
+
+      // 刷新列表
+      await loadInvoices()
+      setSelectedInvoices(new Set())
+
+      // 显示删除结果
+      if (successCount > 0 && failCount === 0) {
+        toast.success(`成功删除 ${successCount} 个发票`)
+      } else if (successCount > 0 && failCount > 0) {
+        toast.success(`成功删除 ${successCount} 个发票，失败 ${failCount} 个`, { duration: 5000 })
+        errors.forEach(error => {
+          toast.error(error, { duration: 4000 })
+        })
+      } else {
+        toast.error(`所有发票删除失败`)
+        errors.forEach(error => {
+          toast.error(error, { duration: 4000 })
+        })
+      }
+
+      setBatchDeleteConfirm(false)
+    } catch (error) {
+      console.error('批量删除失败:', error)
+      toast.error('批量删除失败')
+      setBatchDeleteConfirm(false)
     }
   }
 
@@ -220,6 +331,13 @@ function HomePage() {
         onConfirm={confirmDelete}
         onCancel={() => setDeleteConfirm({ isOpen: false, id: null })}
       />
+      <ConfirmDialog
+        isOpen={batchDeleteConfirm}
+        title="确认批量删除"
+        message={`确定要删除选中的 ${selectedInvoices.size} 个发票吗？删除后无法恢复。`}
+        onConfirm={confirmBatchDelete}
+        onCancel={() => setBatchDeleteConfirm(false)}
+      />
       <div className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
@@ -236,6 +354,14 @@ function HomePage() {
                   disabled={uploading}
                 />
               </label>
+              {selectedInvoices.size > 0 && (
+                <button
+                  onClick={handleBatchDelete}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                >
+                  批量删除 ({selectedInvoices.size})
+                </button>
+              )}
               <button
                 onClick={() => handleExport('csv')}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
@@ -251,9 +377,19 @@ function HomePage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 待处理发票 */}
         <div className="mb-8">
-          <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-            待处理发票相关文件 ({pendingInvoices.length})
-          </h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-semibold text-gray-800">
+              待处理发票相关文件 ({pendingInvoices.length})
+            </h2>
+            {pendingInvoices.length > 0 && (
+              <button
+                onClick={() => handleSelectAll(pendingInvoices)}
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                {pendingInvoices.every(inv => selectedInvoices.has(inv.id)) ? '取消全选' : '全选'}
+              </button>
+            )}
+          </div>
           {pendingInvoices.length === 0 ? (
             <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
               暂无待处理发票
@@ -265,6 +401,8 @@ function HomePage() {
                   key={invoice.id}
                   invoice={invoice}
                   onDelete={handleDelete}
+                  isSelected={selectedInvoices.has(invoice.id)}
+                  onSelect={() => handleSelectInvoice(invoice.id)}
                 />
               ))}
             </div>
@@ -273,9 +411,19 @@ function HomePage() {
 
         {/* 已处理发票 */}
         <div>
-          <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-            已处理发票 ({completedInvoices.length})
-          </h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-semibold text-gray-800">
+              已处理发票 ({completedInvoices.length})
+            </h2>
+            {completedInvoices.length > 0 && (
+              <button
+                onClick={() => handleSelectAll(completedInvoices)}
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                {completedInvoices.every(inv => selectedInvoices.has(inv.id)) ? '取消全选' : '全选'}
+              </button>
+            )}
+          </div>
           {completedInvoices.length === 0 ? (
             <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
               暂无已处理发票
@@ -287,6 +435,8 @@ function HomePage() {
                   key={invoice.id}
                   invoice={invoice}
                   onDelete={handleDelete}
+                  isSelected={selectedInvoices.has(invoice.id)}
+                  onSelect={() => handleSelectInvoice(invoice.id)}
                 />
               ))}
             </div>
@@ -298,16 +448,28 @@ function HomePage() {
 }
 
 // 发票卡片组件
-function InvoiceCard({ invoice, onDelete }) {
+function InvoiceCard({ invoice, onDelete, isSelected = false, onSelect }) {
   const navigate = useNavigate()
   const statusColor = invoice.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
 
   return (
-    <div className="bg-white rounded-lg shadow hover:shadow-md transition p-4">
+    <div className={`bg-white rounded-lg shadow hover:shadow-md transition p-4 ${isSelected ? 'ring-2 ring-blue-500' : ''}`}>
       <div className="flex justify-between items-start mb-2">
-        <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
-          {invoice.status === 'completed' ? '已处理' : '待处理'}
-        </span>
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={(e) => {
+              e.stopPropagation()
+              onSelect && onSelect()
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+          />
+          <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
+            {invoice.status === 'completed' ? '已处理' : '待处理'}
+          </span>
+        </div>
         <button
           onClick={(e) => {
             e.stopPropagation()
