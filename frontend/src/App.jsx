@@ -34,23 +34,62 @@ function HomePage() {
   }
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
+    const files = Array.from(e.target.files)
+    if (!files || files.length === 0) return
 
-    if (!['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(file.name.split('.').pop().toLowerCase())) {
-      toast.error('不支持的文件类型，请上传PDF或图片文件')
+    // 验证文件类型
+    const allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp']
+    const invalidFiles = files.filter(file => {
+      const ext = file.name.split('.').pop().toLowerCase()
+      return !allowedExtensions.includes(ext)
+    })
+
+    if (invalidFiles.length > 0) {
+      toast.error(`有 ${invalidFiles.length} 个文件格式不支持，请上传PDF或图片文件`)
+      e.target.value = ''
       return
     }
 
     try {
       setUploading(true)
-      await invoiceAPI.upload(file)
+      let successCount = 0
+      let failCount = 0
+      const errors = []
+
+      // 批量上传文件
+      for (const file of files) {
+        try {
+          await invoiceAPI.upload(file)
+          successCount++
+        } catch (error) {
+          failCount++
+          errors.push(`${file.name}: ${error.response?.data?.error || error.message}`)
+          console.error(`上传文件 ${file.name} 失败:`, error)
+        }
+      }
+
+      // 刷新列表
       await loadInvoices()
-      toast.success('上传成功')
+
+      // 显示上传结果
+      if (successCount > 0 && failCount === 0) {
+        toast.success(`成功上传 ${successCount} 个文件`)
+      } else if (successCount > 0 && failCount > 0) {
+        toast.success(`成功上传 ${successCount} 个文件，失败 ${failCount} 个`, { duration: 5000 })
+        errors.forEach(error => {
+          toast.error(error, { duration: 4000 })
+        })
+      } else {
+        toast.error(`所有文件上传失败`)
+        errors.forEach(error => {
+          toast.error(error, { duration: 4000 })
+        })
+      }
+
       e.target.value = '' // 重置文件输入
     } catch (error) {
-      console.error('上传失败:', error)
-      toast.error('上传失败: ' + (error.response?.data?.error || error.message))
+      console.error('批量上传失败:', error)
+      toast.error('批量上传失败: ' + (error.response?.data?.error || error.message))
     } finally {
       setUploading(false)
     }
@@ -117,9 +156,10 @@ function HomePage() {
             <h1 className="text-3xl font-bold text-gray-900">发票易</h1>
             <div className="flex gap-4 items-center">
               <label className="px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition">
-                {uploading ? '上传中...' : '上传发票'}
+                {uploading ? '上传中...' : '批量上传发票'}
                 <input
                   type="file"
+                  multiple
                   className="hidden"
                   accept=".pdf,.png,.jpg,.jpeg,.gif,.bmp,.webp"
                   onChange={handleFileUpload}
