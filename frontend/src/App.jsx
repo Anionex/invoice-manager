@@ -521,9 +521,11 @@ function InvoiceCard({ invoice, onDelete, isSelected = false, onSelect, isAttach
               附件
             </span>
           )}
-          <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
-            {invoice.status === 'completed' ? '已处理' : '待处理'}
-          </span>
+          {!isAttachment && (
+            <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
+              {invoice.status === 'completed' ? '已处理' : '待处理'}
+            </span>
+          )}
         </div>
         <button
           onClick={(e) => {
@@ -951,9 +953,11 @@ function InvoiceProcessPage() {
                   <div key={attachment.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-700">{attachment.original_filename}</span>
-                      <span className="text-xs text-gray-400">
-                        ({attachment.status === 'completed' ? attachment.category || '未分类' : '待处理'})
-                      </span>
+                      {attachment.status === 'completed' && (
+                        <span className="text-xs text-gray-400">
+                          ({attachment.category || '未分类'})
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -986,9 +990,11 @@ function InvoiceProcessPage() {
                   <div key={invoice.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-700">{invoice.original_filename}</span>
-                      <span className="text-xs text-gray-400">
-                        ({invoice.status === 'completed' ? invoice.category || '未分类' : '待处理'})
-                      </span>
+                      {invoice.status === 'completed' && (
+                        <span className="text-xs text-gray-400">
+                          ({invoice.category || '未分类'})
+                        </span>
+                      )}
                     </div>
                     <button
                       onClick={() => navigate(`/invoice/${invoice.id}`)}
