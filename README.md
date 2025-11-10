@@ -1,6 +1,10 @@
 # 发票易 - 发票管理平台
 
 一个用于管理和整理发票的Web平台，支持PDF和图片格式的发票上传、预览、分类和导出。
+<img width="2747" height="982" alt="image" src="https://github.com/user-attachments/assets/afba6217-b048-4188-aba3-98268f410b32" />
+
+<img width="2747" height="1402" alt="image" src="https://github.com/user-attachments/assets/2492e626-2c31-4cee-89bf-d2b8f7f6a2a4" />
+
 
 ## 功能特性
 
